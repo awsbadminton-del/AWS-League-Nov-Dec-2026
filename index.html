@@ -22,6 +22,8 @@
     --neutral:#e8eaee;
     --accent:#ff6a1a;
     --accent-soft:#3a1f0d;
+    --drop:#a98bff;
+    --drop-soft:#241a3d;
     --win:#38d07a;
     --win-soft:#123423;
     --gold:#f5c542;
@@ -96,7 +98,6 @@
     border-radius:5px;padding:2px 10px;margin-bottom:14px;
     display:flex;align-items:center;gap:6px;
   }
-  .col-icon{font-size:14px;line-height:1}
 
   .match{
     position:relative;background:var(--card);border:1px solid var(--line);
@@ -129,18 +130,21 @@
   .slot[data-live="1"]:hover{background:var(--card-2)}
   .slot[data-live="0"]{color:var(--ink-3);font-style:italic;cursor:default}
   .slot .nm{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .slot .mark{font-size:11px;font-weight:700;color:var(--ink-3);letter-spacing:.03em}
+  .slot .mark{font-size:11px;font-weight:700;color:var(--ink-3);letter-spacing:.03em;white-space:nowrap}
   .slot.won{background:var(--win-soft);font-weight:600;color:var(--win)}
   .slot.won .mark{color:var(--win)}
   .slot.won.gold{background:var(--gold-soft);color:var(--gold)}
   .slot.won.gold .mark{color:var(--gold)}
-  .slot.lost{opacity:.5;text-decoration:line-through;text-decoration-thickness:1px}
+  .slot.drops{background:var(--drop-soft);color:var(--ink-2)}
+  .slot.drops .mark{color:var(--drop)}
+  .slot.out{color:var(--out);opacity:.6;text-decoration:line-through;text-decoration-thickness:1px}
+  .slot.out .mark{color:var(--out)}
   .slot.silver{background:var(--silver-soft);color:var(--silver);font-weight:600}
   .slot.silver .mark{color:var(--silver)}
   .bo{
     position:absolute;right:-6px;top:-13px;font-size:10px;font-weight:700;letter-spacing:.04em;
     background:var(--panel);border:1px solid var(--line);color:var(--ink-3);
-    border-radius:4px;padding:0 5px;
+    border-radius:4px;padding:0 5px;z-index:3;
   }
   .match.bo3 .bo{color:var(--accent);border-color:var(--accent);font-size:12px;padding:2px 7px;font-weight:800}
 
@@ -156,7 +160,8 @@
     font-size:12.5px;color:var(--ink-2);font-style:italic;
   }
   .legend i{display:inline-block;width:34px;height:0;border-top:2px solid var(--neutral);margin-right:8px;vertical-align:middle;font-style:normal}
-  .legend i.o{border-color:var(--accent)}
+  .legend i.win{border-color:var(--win)}
+  .legend i.drop{border-color:var(--drop);border-top-style:dashed}
 
   /* Standings */
   .results{
@@ -203,9 +208,9 @@
       <div class="seedrow" id="seedrow"></div>
       <div class="cols" id="cols"></div>
       <div class="legend">
-        <span><i></i>Grey matches are a best of 1 set</span>
-        <span><i class="o"></i>Orange matches are a best of 3 sets</span>
-        <span>✕ marks an elimination match &nbsp; 🏆 marks the championship</span>
+        <span><i class="win"></i>Winner advances</span>
+        <span><i class="drop"></i>Loser drops into a later match</span>
+        <span>✕ Elimination round</span>
       </div>
     </div>
   </div>
@@ -238,15 +243,14 @@
     9:{col:4, bo:3, a:{w:7},    b:{w:8}}
   };
 
-  var ELIM = {5:1, 6:1, 7:1, 8:1};
   var CHAMP_MATCH = 9;
 
   var COLUMNS = [
-    {title:"Round 1",    matches:[2,3], note:"",     icon:""},
-    {title:"Round 2",    matches:[4,5], note:"out5", icon:"✕"},
-    {title:"Round 3",    matches:[6],   note:"out6", icon:"✕"},
-    {title:"Semifinals", matches:[7,8], note:"outsf",icon:"✕"},
-    {title:"Finals",     matches:[9],   note:"champ", icon:"🏆"}
+    {title:"Round 1",    matches:[2,3], note:""},
+    {title:"Round 2",    matches:[4,5], note:"out5"},
+    {title:"Round 3",    matches:[6],   note:"out6"},
+    {title:"Semifinals", matches:[7,8], note:"outsf"},
+    {title:"Finals",     matches:[9],   note:"champ"}
   ];
 
   var CONN = [
@@ -257,6 +261,14 @@
     {f:5,t:6,k:"w"},{f:6,t:7,k:"w"},
     {f:7,t:9,k:"w"},{f:8,t:9,k:"w"}
   ];
+
+  // Where each match sends its loser. A match absent from DROPS has no loser
+  // route, so losing it puts you out — the final aside, where you place 2nd.
+  var DROPS = {};
+  CONN.forEach(function(c){ if(c.k === "l") DROPS[c.f] = c.t; });
+
+  var ELIM = {};
+  for(var mid in MATCHES) if(!DROPS[mid] && +mid !== CHAMP_MATCH) ELIM[mid] = 1;
 
   var names = Object.assign({}, DEFAULTS);
   var results = {};           // matchId -> winning seed number
@@ -335,14 +347,23 @@
       b.className = "slot";
       b.type = "button";
       b.setAttribute("data-live", team ? "1" : "0");
-      if(team){
+      // A decided slot takes one of four looks. A loser only reads as "out"
+      // when the match has no loser route; otherwise it names where they go.
+      var mark = "";
+      if(team && results[id]){
         if(results[id] === team){
           b.classList.add("won");
           if(id === CHAMP_MATCH) b.classList.add("gold");
+          else mark = "WIN";
         }
-        else if(results[id]){
-          if(id === CHAMP_MATCH) b.classList.add("silver");
-          else b.classList.add("lost");
+        else if(id === CHAMP_MATCH) b.classList.add("silver");
+        else if(DROPS[id]){
+          b.classList.add("drops");
+          mark = "→ Match " + DROPS[id];
+        }
+        else {
+          b.classList.add("out");
+          mark = "OUT";
         }
       }
       var nm = document.createElement("span");
@@ -350,9 +371,9 @@
       nm.textContent = team ? names[team] : label(m[key]);
       b.appendChild(nm);
 
-      if(team && results[id] === team && id !== CHAMP_MATCH){
+      if(mark){
         var mk = document.createElement("span");
-        mk.className = "mark"; mk.textContent = "WON";
+        mk.className = "mark"; mk.textContent = mark;
         b.appendChild(mk);
       }
 
@@ -393,7 +414,7 @@
       var wrap = document.createElement("div");
       var h = document.createElement("div");
       h.className = "colhead";
-      h.innerHTML = (c.icon ? '<span class="col-icon" aria-hidden="true">' + c.icon + '</span>' : '') + esc(c.title);
+      h.textContent = c.title;
       wrap.appendChild(h);
       c.matches.forEach(function(id){ wrap.appendChild(matchCard(id)); });
 
@@ -453,8 +474,8 @@
     var host = document.getElementById("standings");
     host.innerHTML = "";
     var rows = [];
-    if(results[9]) rows.push({pos:"1st", team:results[9], how:"Won the final"});
-    var l9 = loserOf(9); if(l9) rows.push({pos:"2nd", team:l9, how:"Lost the final"});
+    if(results[9]) rows.push({pos:"1st", team:results[9], how:"Champion"});
+    var l9 = loserOf(9); if(l9) rows.push({pos:"2nd", team:l9, how:"Runner-up"});
     var l7 = loserOf(7), l8 = loserOf(8);
     if(l7) rows.push({pos:"3rd", team:l7, how:"Lost Match 7"});
     if(l8) rows.push({pos:"3rd", team:l8, how:"Lost Match 8"});
@@ -510,15 +531,16 @@
       path.setAttribute("d", d);
       path.setAttribute("fill", "none");
       path.setAttribute("stroke-width", "1.5");
-      var live = c.k === "w" ? !!results[c.f] : false;
-      path.setAttribute("stroke", live ? "var(--win)" : "var(--line)");
+      var live = c.k === "w" ? !!results[c.f] : !!loserOf(c.f);
+      var hue = c.k === "w" ? "var(--win)" : "var(--drop)";
+      path.setAttribute("stroke", live ? hue : "var(--line)");
       path.setAttribute("opacity", live ? "0.95" : "0.7");
       if(c.k === "l") path.setAttribute("stroke-dasharray", "4 4");
       svg.appendChild(path);
 
       var head = document.createElementNS("http://www.w3.org/2000/svg", "path");
       head.setAttribute("d", "M " + x2 + " " + (y2 - 4) + " L " + (x2 + 7) + " " + y2 + " L " + x2 + " " + (y2 + 4) + " Z");
-      head.setAttribute("fill", live ? "var(--win)" : "var(--line)");
+      head.setAttribute("fill", live ? hue : "var(--line)");
       svg.appendChild(head);
     });
   }
